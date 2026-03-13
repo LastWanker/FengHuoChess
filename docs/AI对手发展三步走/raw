@@ -1,0 +1,44 @@
+第一步，做规则老师 AI，名字就叫 HeuristicAISource。它不是神，也不需要对，只需要“明显不蠢”。它直接实现现成的 PlayerSource.select_action(state, legal_actions) 接口，在每个合法动作上调用 simulate_action，然后给结果局面打分，选最高分动作。你的系统现在已经是这个流：headless 自博弈里本来就是 legal_actions(state) -> runner.select_action(...) -> apply_action(...)，而且 simulate_action 深拷贝状态，不污染原局面，所以这一步完全顺着现有骨架走。
+
+这个老师的评分函数不要写成哲学史，只写短程、硬核、局部有效的规则。比如：直接赢给极大正分，直接输给极大负分；阶段 2/3 出锋风险大扣分，因为出锋会触发自动截锋，而且可能连锁直到不再出锋；阶段 4 终局三连库存也要有一些价值，因为满盘可能按三连计分。你的规则文本已经把这些机制写得很清楚：阶段 1 是 3 连，阶段 2 是 4 连，阶段 3 取决于 fast/slow，阶段 4 是 5 连；阶段 2/3 还有截锋连锁，阶段 4 满盘会按不重复三连计分。
+
+这一步的目标不是变强无敌，而是做出一个能稳定跑 EVE、显著强于随机的“老师”。验收标准也很朴素：第一，它能作为新的 PlayerSource 接入，不改 UI 主流程；第二，它在 headless EVE 下能稳定跑完至少几百局并导出 JSONL trace；第三，它对随机 AI 要有显著胜率优势，比如 70% 以上。你现在的 trace 结构已经支持每步写 state / legal_actions / action / player / events / outcome，所以这一步几乎就是在现有轨道上发车。
+
+流程和AI接口总结
+
+第二步，做模仿老师的小模型，名字可以叫 PolicyNet 配 ModelAISource。这里不要碰纯强化学习，先做监督学习。输入就是 state_to_dict(state, core_only=True) 导出的训练字段，再加合法动作列表；输出是对所有合法动作的分数，或者一个动作概率分布。你现成的序列化接口和训练最小字段已经定义过了，像 board、stage、current_player、game_mode、game_over、winner、stage_positions 这些，已经够第一版模型用。
+
+这一步最关键的认知是：模型不是学“最终真理”，而是先学“老师大体怎么走”。所以训练目标可以非常直接——用 HeuristicAISource 在 trace 里选的动作当标签，做合法动作上的 masked classification（带合法动作掩码的分类，也就是只在合法步里选）。为了不把老师的错误全量灌进去，建议只保留两类样本：一类是赢家方的动作，另一类是老师在局面中拿到高分、且最后整局赢了的动作。这样杂质会少很多。训练完之后，做一个 ModelAISource，让它也实现 select_action(state, legal_actions)，只不过内部不再枚举试走全盘，而是直接前向推理给合法动作打分。
+这一步的验收标准也要很具体：第一，训练脚本能从 JSONL 正常读数据并产出权重文件；第二，ModelAISource 能在 EVE 中稳定跑完，不非法落子；第三，它对随机 AI 的胜率至少不明显低于老师，对老师本人则允许先打不过。注意，这一步的目标不是超越老师，而是把老师的经验压成一个更快的直觉器。这一步一旦成了，你就已经从“规则搜索”跨进“可学习策略”了。
+
+第三步，做自博弈擂台升级，也就是你说的“左脚踩右脚”，但必须带护栏。具体不是“模型自己和自己打，然后突然成仙”，而是做一个严格的 challenger pipeline（挑战者流程）：先用当前最佳模型 best_model 生成一批自博弈数据，再用这些数据训练出候选模型 candidate_model，然后让候选和当前最佳打一组固定局数擂台，比如 200 或 400 局，黑白轮换、fast/slow 都覆盖；只有当候选胜率超过门槛，比如 55%，它才升级成新的 best_model。否则丢弃，继续训练下一轮。
+这一步为什么可行？因为你的 headless EVE 已经有了，双方策略可指定，trace 也能自动导出；当前 AI 接口还明确支持后续扩展 Minimax / MCTS / 模型推理，所以把 ModelAISource 塞进去本来就是顺手活。
+
+为了防止模型越练越歪，这一步还要加两个稳定器。第一个稳定器是混合对手池：训练和评估时不要只打“当前最强自己”，还要混入老师 AI、旧版本模型、随机 AI。否则模型容易对自己的坏习惯过拟合。第二个稳定器是保留少量老师监督数据：每一轮训练时，加入一部分步骤二的监督样本，相当于给模型留一点常识护栏，防止它在强化过程中学出一些奇怪歪招。
+这一步的验收标准要写死：第一，存在 best_model 与 candidate_model 的擂台脚本；第二，模型升级完全由胜率门槛决定，不靠主观感受；第三，每轮训练和评估都保存日志、胜率、样本数和模型版本号；第四，任何新模型都必须至少不输老师 AI 太多，否则不升级。这样它才不是“左脚踩右脚跳崖”，而是真正的自举。
+
+如果把这三步压成 Codex 最爱听的人话，就是这样：
+
+Step A：实现 HeuristicAISource，并补一个离线评测脚本，让它对随机 AI 有稳定优势。
+Step B：基于 trace 训练一个小策略模型，实现 ModelAISource，先做到模仿老师、稳定落子、跑通 EVE。
+Step C：实现 best_model vs candidate_model 的自博弈擂台与升级流程，用真实胜率迭代模型，并保留老师 AI 作为对手池一部分。
+
+我再给你一个更像“项目经理任务书”的版本，方便直接喂给 Codex：
+
+第一阶段任务：
+新增 ai/baselines/heuristic_ai.py，实现 HeuristicAISource。内部使用 simulate_action，不得复制规则。新增 scripts/eval_ai.py，支持 heuristic vs random 的批量对战评估，输出胜率、平均步数、非法动作数。新增简单评分函数模块，比如 ai/eval/heuristic_eval.py。验收：heuristic 在 200 局 EVE 中对 random 胜率大于 70%，且 trace 导出正常。
+
+第二阶段任务：
+新增 ai/training/dataset.py、ai/training/policy_model.py、ai/training/train_policy.py、ai/model_ai.py。训练数据来自现有 JSONL trace。模型输入基于 state_to_dict(..., core_only=True)，只对合法动作打分。训练目标先用老师动作监督，优先使用赢家样本。验收：可以产出模型权重；ModelAISource 能在 headless EVE 中稳定运行；对 random 胜率不低于 heuristic 的 80%。
+
+第三阶段任务：
+新增 ai/training/selfplay_league.py 和 scripts/run_league.py。实现 best_model、candidate_model、teacher_pool、opponent_pool、promotion_threshold。每轮流程是：生成自博弈数据、训练候选模型、固定局数评估、满足门槛才升级。验收：能连续运行多轮；每轮保存模型版本、胜率、样本统计；best_model 历史胜率总体不倒退。
+
+这套计划之所以靠谱，不是因为它“听起来先进”，而是因为它完全贴着你现在的工程地形走：你已经有统一规则源、输入源抽象、headless EVE、自博弈 trace、状态序列化，这些正是这条路线所需的地基。
+
+流程和AI接口总结
+
+最后给你一个很重要的判断标准：
+第一步的老师 AI，目标是明显强于随机。
+第二步的模型，目标是学会下棋并压缩老师经验。
+第三步的自博弈擂台，目标才是真正超越老师。

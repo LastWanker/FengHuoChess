@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fenghuo-chess"
+version = "0.1.0"
+description = "FengHuoChess - staged strategy board game built with pygame."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.0.0",
+  "pygame>=2.6.0",
+]
+
+[project.scripts]
+fenghuo-chess = "src.fenghuo_chess.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
