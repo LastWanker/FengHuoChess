@@ -1,93 +1,51 @@
 # FengHuoChess
 
-锋火战略棋项目（pygame + numpy）。
+锋火战略棋项目（Python + pygame + numpy）。
 
-## 项目结构
+## 当前状态
 
-```text
-src/fenghuo_chess/
-├─ constants/      # 视觉、尺寸、规则常量
-├─ domain/         # 领域模型与纯规则
-├─ services/       # 出锋/悔棋/模式服务
-├─ application/    # GameController 流程编排
-└─ ui/             # pygame 循环、渲染、输入映射、播报动画
-```
+- 规则引擎、PVP/PVE/EVE、headless 自博弈已稳定可用。
+- V2 模型链路（导出 -> 筛样 -> 训练 -> 擂台晋升）可运行。
+- V3（CNN + Temporal Transformer + Value 决策）已落地，包含独立数据、训练、评估与联赛脚本。
 
-## 快速运行
+## 快速开始
 
-1. 安装依赖并以可编辑模式安装项目
+1. 安装依赖（建议 Python 3.11+）：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -e .
 ```
 
-2. 启动
+2. 启动 UI：
 
 ```powershell
 .\.venv\Scripts\python.exe -m src.fenghuo_chess.app
 ```
 
-或使用脚本入口：
+3. 启动 headless（EVE）：
 
 ```powershell
-.\.venv\Scripts\fenghuo-chess.exe
+.\.venv\Scripts\python.exe -m src.fenghuo_chess.app --headless --match-mode eve --games 20 --output artifacts/selfplay.jsonl
 ```
 
-3. 启动不同对战编排模式
+## V3 相关命令
+
+1. V3 对战评估（示例）：
 
 ```powershell
-.\.venv\Scripts\python.exe -m src.fenghuo_chess.app --match-mode pvp
-.\.venv\Scripts\python.exe -m src.fenghuo_chess.app --match-mode pve
-.\.venv\Scripts\python.exe -m src.fenghuo_chess.app --match-mode eve
-.\.venv\Scripts\python.exe -m src.fenghuo_chess.app --match-mode pve --human-player 2
+.\.venv\Scripts\python.exe scripts/eval_v3_model_ai.py --opponent baseline --games 30 --game-mode slow --device cuda
 ```
 
-说明：
-- UI 介绍页可直接给 `P1(黑)/P2(白)` 分别选择：`人类/菜鸟AI/baseline/大师AI`。
-- 默认组合为：`P1=人类`，`P2=baseline`。
-- `大师AI` 使用 `ModelAISource`（快/慢双权重）；可通过环境变量指定：
-  - `FENGHUO_MASTER_MODEL_FAST_PATH`（快速模式权重）
-  - `FENGHUO_MASTER_MODEL_SLOW_PATH`（慢速模式权重）
-  - `FENGHUO_MASTER_MODEL_PATH`（单权重兜底，未分别设置时会复用）
-  - `FENGHUO_MASTER_DEVICE`（默认 `cuda`）
-- 未设置环境变量时，`大师AI` 默认优先读取 `artifacts/models/model_tiny_policy_slow_best.pt`。
-- 只要开启 UI，AI 回合都会有至少 `1s` 的最小等待时间；headless 模式不受该限制。
-
-4. 无 UI 自博弈（EVE）
+2. V3 联赛循环（示例）：
 
 ```powershell
-.\.venv\Scripts\python.exe -m src.fenghuo_chess.app --headless --match-mode eve --games 10 --output ./artifacts/selfplay.jsonl
+.\.venv\Scripts\python.exe scripts/run_v3_league_cycle.py --rounds 3
 ```
 
-5. 模型数据流水线（slow 默认）
+> 说明：V3 脚本默认读写 `artifacts/v3_transformer/` 目录，尽量与 V2 产物隔离。
 
-```powershell
-.\scripts\run_teacher_pipeline.ps1
-.\.venv\Scripts\python.exe scripts/run_teacher_pipeline.py
+## 文档保留策略
 
-.\.venv\Scripts\python.exe scripts/export_teacher_data.py --games 2000 --workers 8 --trace-output artifacts/datasets/teacher_trace_raw.jsonl --summary-output artifacts/datasets/teacher_games_summary.jsonl
-.\.venv\Scripts\python.exe scripts/curate_teacher_dataset.py --trace-input artifacts/datasets/teacher_trace_raw.jsonl --summary-input artifacts/datasets/teacher_games_summary.jsonl --trace-output artifacts/datasets/teacher_trace_balanced.jsonl --summary-output artifacts/datasets/teacher_games_balanced.jsonl
-.\.venv\Scripts\python.exe scripts/train_policy_model.py --trace artifacts/datasets/teacher_trace_balanced.jsonl --mode slow --output artifacts/models/model_tiny_policy_slow.pt --epochs 12 --batch-size 256 --device cuda
-.\.venv\Scripts\python.exe scripts/eval_model_ai.py --model-fast artifacts/models/model_tiny_policy_fast.pt --model-slow artifacts/models/model_tiny_policy_slow.pt --opponent weak --games 50 --game-mode slow --device cuda
-.\.venv\Scripts\python.exe scripts/eval_model_ai.py --model-fast artifacts/models/model_tiny_policy_fast.pt --model-slow artifacts/models/model_tiny_policy_slow.pt --opponent baseline --games 50 --game-mode slow --device cuda
-```
-
-6. 自博弈擂台升级（单轮）
-
-```powershell
-.\.venv\Scripts\python.exe -m src.fenghuo_chess.ai.selfplay_league --best-model artifacts/models/model_tiny_policy_slow_best.pt --candidate-model artifacts/models/model_tiny_policy_slow.pt --arena-games 200 --selfplay-games 400 --game-mode slow --device cuda
-```
-
-7. 一键跑一轮升级循环（导出→筛样→训练→晋升）
-
-```powershell
-.\.venv\Scripts\python.exe scripts/run_league_cycle.py
-```
-
-## 文档
-
-- 架构说明：`docs/架构说明.md`
-- 一次性改造计划：`docs/一次性改造计划.md`
-- 玩法规则：`docs/玩法规则.md`
-- AI 现状分析：`docs/AIplayer.md`
-- AI 接入可行方案：`docs/AI接入可行方案.md`
+- 保留：本 `README.md`
+- 保留：`docs/玩法规则.md`
+- 其它文档默认不入库（避免上传隐私内容）

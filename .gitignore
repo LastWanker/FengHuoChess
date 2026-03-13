@@ -192,3 +192,8 @@ scripts/logs/
 .idea/
 Thumbs.db
 .DS_Store
+
+# Docs privacy policy: keep only gameplay rules in repo
+docs/**
+!docs/
+!docs/玩法规则.md
